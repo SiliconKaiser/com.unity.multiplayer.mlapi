@@ -18,6 +18,14 @@ namespace MLAPI.NetworkVariable
         /// </summary>
         public readonly NetworkVariableSettings Settings = new NetworkVariableSettings();
 
+		/// <summary>
+		/// Gets the last time the variable was synced
+		/// </summary>
+		public float LastSyncedTime { get; internal set; }
+
+		// The remote's local tick time. Used to keep track of whether a newly received message is old.
+		public ushort? LastRemoteLocalTick = null;
+
         /// <summary>
         /// The last time the variable was written to locally
         /// </summary>
@@ -31,7 +39,7 @@ namespace MLAPI.NetworkVariable
         /// </summary>
         /// <param name="previousValue">The value before the change</param>
         /// <param name="newValue">The new value</param>
-        public delegate void OnValueChangedDelegate(T previousValue, T newValue);
+        public delegate void OnValueChangedDelegate(ushort remoteTick, T previousValue, T newValue);
         /// <summary>
         /// The callback to be invoked when the value gets changed
         /// </summary>
@@ -110,13 +118,17 @@ namespace MLAPI.NetworkVariable
         /// <inheritdoc />
         public bool IsDirty()
         {
-            return m_IsDirty;
+			if (Settings.SendTickrate == 0) return m_IsDirty;
+			if (Settings.SendTickrate < 0) return false;
+			if (NetworkManager.Singleton.NetworkTime - LastSyncedTime >= (1f / Settings.SendTickrate)) return m_IsDirty;
+			return false;
         }
 
         /// <inheritdoc />
         public void ResetDirty()
         {
             m_IsDirty = false;
+			LastSyncedTime = NetworkManager.Singleton.NetworkTime;
         }
 
         /// <inheritdoc />
@@ -169,6 +181,17 @@ namespace MLAPI.NetworkVariable
             return true;
         }
 
+		static bool IsSequenced(NetworkChannel channel)
+		{
+			return channel == NetworkChannel.Internal ||
+			channel == NetworkChannel.ReliableRpc ||
+			channel == NetworkChannel.UnreliableRpc ||
+			channel == NetworkChannel.PositionUpdate ||
+			channel == NetworkChannel.AnimationUpdate ||
+			channel == NetworkChannel.NavAgentState ||
+			channel == NetworkChannel.NavAgentCorrection;
+		}
+
         /// <summary>
         /// Reads value from the reader and applies it
         /// </summary>
@@ -178,6 +201,12 @@ namespace MLAPI.NetworkVariable
         {
             // todo: This allows the host-returned value to be set back to an old value
             // this will need to be adjusted to check if we're have a most recent value
+			if (IsSequenced(Settings.SendNetworkChannel)) {
+				if (LastRemoteLocalTick.HasValue && remoteTick == NetworkTickSystem.NoTick) return;
+				if (LastRemoteLocalTick.HasValue && remoteTick <= LastRemoteLocalTick.Value) return;
+				if (remoteTick != NetworkTickSystem.NoTick) LastRemoteLocalTick = remoteTick;
+			}
+
             LocalTick = localTick;
             RemoteTick = remoteTick;
 
@@ -188,7 +217,7 @@ namespace MLAPI.NetworkVariable
 
                 if (keepDirtyDelta) m_IsDirty = true;
 
-                OnValueChanged?.Invoke(previousValue, m_InternalValue);
+                OnValueChanged?.Invoke(remoteTick, previousValue, m_InternalValue);
             }
         }
 
