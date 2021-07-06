@@ -101,7 +101,7 @@ namespace MLAPI.NetworkVariable
                 m_IsDirty = true;
                 T previousValue = m_InternalValue;
                 m_InternalValue = value;
-                OnValueChanged?.Invoke(previousValue, m_InternalValue);
+                OnValueChanged?.Invoke(RemoteTick, previousValue, m_InternalValue);
             }
         }
 
